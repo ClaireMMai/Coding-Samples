@@ -1,0 +1,402 @@
+  /*
+  * File: explicit.c
+  * ----------------------------------------------------
+  * This file allocates memory to the heap by going through a list of free blocks in the memory, is also
+  * frees blocks of memory and appends then to the front of this free list, this file also reallocates memory
+  * by either finding another free block or reallocating the current block, also the file recycles memory
+  * and combines free blocks if they're next to eachother. Furthermore this file also validates the heap by checking 
+  * if all the blocks and sizes of accounted for, and that all the free blocks are corrently strung together. 
+  *
+  * Claire Mai 6/7/18
+  */
+ 
+  #include "allocator.h"
+  #include "debug_break.h"
+  #include <string.h>
+  
+  //free bit is the number 1 used to turn a block header from used to free or vice versa
+  #define FREE_BIT 1
+  
+  //global variables: start is a pointer to the start of the heap, end is a pointer to the end of the heap, heap_size is the size of the heap
+  void *start;
+  void *end;
+  size_t heap_size;
+  //freelist is a pointer that points to the beginning of a list of free blocks
+  struct header *freelist;
+  
+  /* struct header is an unsigned long that stores the size and status of a block of memory, since the size of a memory block
+  * is always a multiple of 8, the lsb is always 0 for size, thus size is stored in all 64 bits, and the lsb is flipped to 1 
+  * to signify free and 0 to signify used
+  */
+  struct header {
+      unsigned long status;
+  };
+  
+  /* This function gets the ptr to the head of a block of memory
+  * Parameters: ptr is a pointer to the block of memory
+  * Returns: returns a ptr to the header right before the memory, where the header specifies the size and status of the memory block
+  */
+  struct header *ptr_to_header (void *ptr)
+  {
+      return (struct header *)((char *)ptr - sizeof(struct header));
+  }
+  
+  /* This function points to the next header of the heap where it starts at a header and then points to the next header
+  * Parameters: ptr is the pointer to a block of memory, seg)size is the size of the ptr's block of memory
+  * Returns: returns a pointer to the next header after the ptr's block of memory
+  */
+  struct header *ptr_to_next_header (void *ptr, size_t seg_size)
+  {
+      //advances ptr to the next header and stores in next_ptr
+      void *next_ptr = (char *)ptr + seg_size + sizeof(struct header);
+      //checks if the supposed next header is out of bounds, if it is then returns NUL
+      if (next_ptr >= end)
+          return NULL;
+      else
+          return next_ptr;
+  }
+  
+  /* This function gets the size of the memory block pointed to by ptr
+  * Parameters: ptr is a pointer to the header of a memory block
+  * Returns: returns the size of memory block that was stored in the header
+  */
+  unsigned long get_size (struct header *ptr)
+  {
+      //&s the status with ot FREE_BIT (all ones and a 0 is the lsb) in order to get the size
+      return ptr->status & ~FREE_BIT;
+  }
+  
+  /* This function rounds up the size so that it is a multiple of 8
+  * Parameters: sz is the size that needs to be rounded, mult is the multiple number that size needs to be: 8
+  * Returns: returns the sz rounded up so that its a multiple of 8
+  */
+  size_t roundup (size_t sz)
+  {
+      size_t mult = 8;
+      return (sz + mult-1) & ~(mult-1);
+  }
+  
+  /* This function checks if the header is an actual and valid header
+  * Parameters: ptr is a pointer to a supposed header
+  * Returns: returns true if the size of the header is greater than 8 and a multiple of 8, or is greater than the heap size
+  *  returns false otherwise
+  */
+  bool is_valid_header (void *ptr)
+  {
+      size_t size = get_size(ptr);
+      if ((size < 16) || ((size % 8) != 0) || (size >= heap_size))
+          return false;
+      else
+          return true;
+  }
+  
+  /* This function checks if a block of memory is free
+  * Parameters: ptr is a pointer to the header of the block of memory that is being checked if free
+  * Returns: returns true if lsb is 1, false otherwise
+  */
+  bool is_free(struct header *ptr)
+  {
+      if(ptr == NULL)
+         return false;
+     return(((ptr->status) & FREE_BIT) == FREE_BIT);
+ }
+ 
+ /* This function creates a new header for a block of memory
+ * Parameters: ptr is a pointer to where the header should be created in the heap memory, size is the size the new header needs to be
+ * Returns: returns a pointer to the new header
+ */
+ struct header *create_header(void *ptr, size_t size)
+ {
+     struct header *new_header = ptr;
+     new_header->status = size;
+     //makes the new header have a free status
+     new_header->status |= FREE_BIT;
+     return new_header;
+ }
+ 
+ /* This function gets the next header in the freelist
+ * Parameters: ptr is a pointer to the current header
+ * Returns: returns a pointer to the next header is freelist that was stored in the next 8 bytes after the current header(stored in the pay load)
+ */
+ struct header *get_next_hdr(struct header *ptr)
+ {
+      return *(struct header **)(ptr + 1);
+ }
+ 
+ /* This function gets the previous header in the freelist
+ * Parameters: ptr is a pointer to the current header
+ * Returns: returns a pointer to the previous header in the freelist that was stored in the payload
+ */
+ struct header *get_prev_hdr(struct header *ptr)
+ {
+     return *(struct header **)(ptr + 2);
+ }
+ 
+ /* This function updates the header by setting a new size to the header
+ * Parameters: hdr is a pointer to the header that is being updated, size is the new size the header is being updated to
+ */
+ void update_header (struct header *hdr, size_t size)
+ {
+     hdr->status = size;
+ }
+ 
+ /* This function sets the pointer that points to the next header to be a different header
+ * Parameters: header is the current header's next pointer that is being changed, next_header is what the current's next pointer is going to point to
+ */
+ void set_next_ptr(struct header *header, struct header *next_header)
+ {
+     //advances 8 bytes to access the next ptr in the payload of freeblock
+     struct header **next_ptr = (struct header **)(header + 1);
+     *next_ptr = next_header;
+ }
+ 
+ /* This function sets the pointer that points to the previous header to be a different header
+ * Parameters: header is the currest header's previous pointer that is changing, prev_header is what the current's previous pointer is going to point to
+ */
+ void set_prev_ptr(struct header *header, struct header *prev_header)
+ {
+         //advances 16 bytes to access the prev ptr in the payload of freeblock
+         struct header **prev_ptr = (struct header **)(header + 2);
+         *prev_ptr  = prev_header;
+ }
+ 
+ /* This function sets the next point and previous pointer to point to different headers
+ * Parameters: prev_hdr is the next pointer of the previous header that ends up pointing to the new_next_ptr
+ * new_next_ptr is a pointer to a header or is NULL, next_hdr is the previous ptr of the next header which gets set to 
+ * the new_prev_ptr. new_prev_ptr is a pointer to a header of is NULL
+ */
+ void set_pointers(struct header *prev_hdr, struct header *next_hdr, struct header *new_prev_ptr, struct header *new_next_ptr)
+ {
+     //sets the prev ptr
+     if(next_hdr != NULL)
+         set_prev_ptr(next_hdr, new_prev_ptr);
+     //set the next ptr
+     if(prev_hdr != NULL)
+         set_next_ptr(prev_hdr, new_next_ptr);
+ }
+ 
+ /* This function creates a new header at the start of the heap and initilizes the start, end, and freelist pointer, and the heap_size
+ * Also sets the next and prev pointers of the free list to be null since theres only one free block in the entire heap
+ * Parameters: segment_start is a pointer to the start of the heap, segment_size is the size of the heap
+ */
+ bool myinit(void *segment_start, size_t segment_size)
+ {
+     heap_size = segment_size;
+     start = segment_start;
+     freelist = create_header(segment_start, segment_size - sizeof(struct header));
+     set_pointers(freelist, freelist, NULL, NULL);
+     end = (char *)segment_start + segment_size;
+     return true;
+ }
+ 
+ /* This function allocates memory to the heap of specified size and returns a pointer to the allocated memory
+ * The function traverses through the freelist and finds a block that has enough size
+ * Parameters: requestedsz is the amount of memory that the user wants allocated
+ * Returns: returns a pointer to the new allocatd memory
+ */
+ void *mymalloc(size_t requestedsz)
+ {
+     requestedsz = roundup(requestedsz);
+     if (requestedsz > (1 << 30) || requestedsz == 0)
+         return NULL;
+     if (requestedsz < 16)
+         requestedsz = 16;
+     struct header *curr_ptr = freelist;
+     size_t seg_size = 0;
+ 
+     while (curr_ptr != NULL) {
+         seg_size = get_size(curr_ptr);
+         if (requestedsz <= seg_size) {
+             struct header *prev_hdr = get_prev_hdr(curr_ptr);
+             struct header *next_hdr = get_next_hdr(curr_ptr);
+             //first case: theres extra space in the free block to make a new free block and allocate memory of requestedsz
+             if ((seg_size - requestedsz) > 24) {
+                 struct header *new_header = create_header((char *)curr_ptr + requestedsz + sizeof(struct header), seg_size - requestedsz - sizeof(struct header));
+                 // if free block being allocated is the only free block in the freelist
+                 if(prev_hdr == NULL && next_hdr == NULL) {
+                     set_pointers(new_header, new_header, NULL, NULL);
+                 }
+                 // if the free block is the first free block in the freelist, append new header to front of freelist
+                 else  if (prev_hdr == NULL) {
+                     set_pointers(new_header, next_hdr, new_header, next_hdr);
+                     set_prev_ptr(new_header, NULL);
+                 //if the free block is the last free block in the freelist, make the prev header the last free block, and append new header to front of freelist
+                 } else if (next_hdr == NULL) {
+                     set_pointers(prev_hdr, NULL, NULL, NULL);
+                     set_pointers(new_header, freelist, new_header, freelist);
+                 //connect the prev and next freeblocks and append new header to front of freelist
+                 } else {
+                     set_pointers(prev_hdr, next_hdr, prev_hdr, next_hdr);
+                     set_pointers(new_header, freelist, new_header, freelist);
+                 }
+                 freelist = new_header;
+                 set_prev_ptr(freelist, NULL);
+                 update_header(curr_ptr, requestedsz);
+             } else {
+                 //else connect prev and next hdr in freelist
+                 set_pointers(prev_hdr, next_hdr, prev_hdr, next_hdr);
+                 if(prev_hdr == NULL)
+                     freelist = next_hdr;
+                 update_header(curr_ptr, seg_size);
+             }
+             curr_ptr->status &= ~FREE_BIT;
+             return curr_ptr + 1;
+         }
+         //if requestedsz is larger the size of the memory block, then gets the next free memory block
+         curr_ptr = get_next_hdr(curr_ptr);
+     }
+     return NULL;
+ }
+ 
+ /* This function continues to combine freeblocks together if they are immediately after eachother
+ * Parameters: hdr is the header that free blocks after would be coalesced into
+ */
+ void coalesce(struct header *hdr)
+ {
+     size_t block_size = get_size(hdr);
+     struct header *next_hdr = ptr_to_next_header(hdr, block_size);
+     while (is_free(next_hdr) && next_hdr != NULL) {
+         struct header *next_ptr = get_next_hdr(next_hdr);
+         struct header *prev_ptr = get_prev_hdr(next_hdr);
+         size_t next_size = get_size(next_hdr);
+         //if next_hdr is the only free block then update header to include all memory
+         if(next_ptr == NULL && prev_ptr == NULL) {
+             update_header(hdr, block_size + next_size + sizeof(struct header));
+             return;
+         }
+         //if next_hdr is last block in free list, then make prev header of last block the last block
+         if(next_ptr == NULL) {
+             set_pointers(prev_ptr, NULL, NULL, NULL);
+             update_header(hdr, block_size + next_size + sizeof(struct header));
+             return;
+         }
+         //if next hdr is the first block of freelist, then back the next freeblock the front of freelist
+         if(next_hdr == freelist) {
+ 
+             set_pointers(NULL, next_ptr, NULL, NULL);
+             freelist = next_ptr;
+             update_header(hdr, block_size + next_size + sizeof(struct header));
+             return;
+         }
+         //other wise, connect the previous and next headers and the update the block size of the original hdr
+         set_pointers(prev_ptr, next_ptr, prev_ptr, next_ptr);
+         block_size += next_size + sizeof(struct header);
+         update_header(hdr, block_size);
+         //advances to the next header in the heap
+         next_hdr = ptr_to_next_header(next_hdr, next_size);
+     }
+ }
+ 
+ /* This function frees the block of memory pointed to by the ptr then coalesces it if neighboring blocks if they're free
+ * and then appends this new freeblock to the front of the freelist
+ * Parameters: ptr is a pointer to the memory block that needs to be free
+ */
+ void myfree(void *ptr)
+ {
+     if(ptr == NULL)
+         return;
+ 
+     struct header *hdr = ptr_to_header(ptr);
+     //set hdr to front of freelist
+     set_pointers(hdr, freelist, hdr, freelist);
+     freelist = hdr;
+     set_prev_ptr(freelist, NULL);
+     //coalesces freelist if can
+     coalesce(freelist);
+     freelist->status |= FREE_BIT;
+ }
+ 
+ /* This function changes the size of the memory block pointed to by the oldpt to the newsz, but if the newsz is bigger
+ * than the current memory bock, then memory of the with size newsz is allocated and the info of the oldptr memory block
+ * is transferred to the new memory block and the old one is freed
+ * Parameters: oldptr is a pointer to the memory block that is being reallocated, newsz is the new size the memory block should be
+ * Returns: returns a pointer to the block of memory that has a size of newsz
+ */
+ void *myrealloc(void *oldptr, size_t newsz)
+ {
+     newsz = roundup(newsz);
+     if(oldptr == NULL)
+         return mymalloc(newsz);
+     if(newsz == 0 && oldptr != NULL) {
+         myfree(oldptr);
+         return NULL;
+     }
+     if (newsz <= 8)
+         newsz = 16;
+     struct header *ptr_header = ptr_to_header(oldptr);
+     size_t old_size = get_size(ptr_header);
+     //in replace realloc if the original size of memory block is bigger than the new size
+     if (old_size >= newsz) {
+         //returns oldptr if the extra space in the oldptr memory block is too little to make a new header
+         if ((old_size - newsz) < 24)
+             return oldptr;
+struct header *new = create_header((char *)oldptr + newsz, old_size - newsz - sizeof(struct header));
+         update_header(ptr_header, newsz);
+         //appends new header that has extra space of the oldptr memory block to front of freelist
+         set_pointers(new, freelist, new, freelist);
+         freelist = new;
+         set_prev_ptr(freelist, NULL);
+         // *(struct header **)(freelist + 2) = NULL;
+         return oldptr;
+     }
+     //coalesce the memory block pointed to by oldptr
+     coalesce(ptr_header);
+     size_t size = get_size(ptr_header);
+     //after coalescing, checks if the newsz is greater than size, if yes then do in place realloc
+     if (newsz <= size) {
+         if ((size - newsz) < 24) {
+             return oldptr;
+         }
+ 
+         struct header *next = get_next_hdr(freelist);
+         struct header *prev = get_prev_hdr(freelist);
+         struct header *new_hdr = create_header((char *)oldptr + newsz, size - newsz - sizeof(struct header));
+         //if only one free block, then new_hdr becomes the front
+         if (next == NULL && prev == NULL) {
+             freelist = new_hdr;
+             set_pointers(new_hdr, new_hdr, NULL, NULL);
+         //else append new_hdr to front of freelist
+         } else {
+             set_pointers(new_hdr, freelist, new_hdr, freelist);
+             set_prev_ptr(new_hdr, NULL);
+             freelist = new_hdr;
+         }
+         update_header(ptr_header, newsz);
+         return oldptr;
+     }
+     //if coalesce and inreplace realloc fail, then malloc, copy the memory in old block and free old block 
+     void *newptr = mymalloc(newsz);
+     memcpy(newptr, oldptr, old_size);
+     myfree(oldptr);
+     return newptr;
+ }
+ 
+ /* This function checks the internal structs of the heap by checking the entire heap and the freelist. First it
+ * starts at the beginning of the heap and going through each header, makes sure each header is a valid header
+ * Then it starts at the front of the freelist and checks that every block in the freelist has a valid header and is free
+ * Return: returns true if all is ok, false otherwise
+ */
+ bool validate_heap()
+ {
+     struct header *curr_ptr = start;
+     while (curr_ptr != NULL) {
+         if (!is_valid_header(curr_ptr)) {
+             breakpoint();
+             return false;
+         } else {
+             size_t size = get_size (curr_ptr);
+             curr_ptr = ptr_to_next_header(curr_ptr, size);
+         }
+}
+     curr_ptr = freelist;
+     while(curr_ptr != NULL) {
+         if(!is_valid_header(curr_ptr) || (!is_free(curr_ptr))) {
+             breakpoint();
+             return false;
+         } else {
+             //gets next header in freelist
+             curr_ptr = get_next_hdr(curr_ptr);
+         } 
+     }       
+     return true;
+ }       
