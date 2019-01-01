@@ -77,7 +77,7 @@ Vector<Vertex*> breadthFirstSearch(BasicGraph& graph, Vertex* start, Vertex* end
     return reconstructPath(start, end, vCouple);
 }
 
-// Tis function iitializes all vertces to have an initial cost infinity, and for start, initial cost zero
+// Tis function iitializes all vertices to have an initial cost infinity, and for start, initial cost zero
 HashMap<Vertex*, double> initializeCost(BasicGraph& graph, Vertex*& start){
     HashMap<Vertex*, double> cost;
     for(Vertex* v : graph.getVertexSet()){
@@ -88,7 +88,7 @@ HashMap<Vertex*, double> initializeCost(BasicGraph& graph, Vertex*& start){
 }
 
 
-// This algorithm finds a path (optimal cost path) using Dijkstra's algo, if a path exists
+// This algorithm finds a path (optimal cost path) using Dijkstra's algorithm, if a path exists
 Vector<Vertex*> dijkstrasAlgorithm(BasicGraph& graph, Vertex* start, Vertex* end) {
     graph.resetData();
     PriorityQueue<Vertex*> chosen;
@@ -118,7 +118,7 @@ Vector<Vertex*> dijkstrasAlgorithm(BasicGraph& graph, Vertex* start, Vertex* end
     return reconstructPath(start, end, vCouple);
 }
 
-// This algorithm finds a path (optimal heuristic cost path) using Dijkstra's algo, if a path exists
+// This algorithm finds a path (optimal heuristic cost path) using Dijkstra's algorithm, if a path exists
 Vector<Vertex*> aStar(BasicGraph& graph, Vertex* start, Vertex* end) {
     graph.resetData();
     PriorityQueue<Vertex*> chosen;
@@ -157,6 +157,7 @@ PriorityQueue<Edge*> getallEdges(BasicGraph& graph){
     return allEdges;
 }
 
+//This function creates a new cluster of vertices
 void createNewCluster(Vector<HashSet<Vertex*>>& clusters, Edge* edge, Set<Edge*>& mst) {
     HashSet<Vertex*> newCluster;
     newCluster.add(edge->start);
@@ -165,11 +166,11 @@ void createNewCluster(Vector<HashSet<Vertex*>>& clusters, Edge* edge, Set<Edge*>
     mst.add(edge);
 }
 
+//This function implements kruskal's algorithm 
 Set<Edge*> kruskal(BasicGraph& graph) {
     PriorityQueue<Edge*> allEdges = getallEdges(graph);
     Set<Edge*> mst;
     Vector<HashSet<Vertex*>> clusters;
-    //HashSet<Vertex*> tracking;
     bool startFound = false;
     bool endFound = false;
     int start = -1;
